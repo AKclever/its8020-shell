@@ -121,3 +121,51 @@ fn quoted_paths_work_and_syntax_errors_have_no_side_effects() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "good\n");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn background_returns_before_child_finishes_and_wait_reports_status() {
+    use std::{
+        io::{BufRead, BufReader},
+        time::{Duration, Instant},
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_its8020-shell"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"sleep 2 &\necho returned\njobs\nwait\nfalse &\nwait\necho status=$?\nexit\n")
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut first = String::new();
+    reader.read_line(&mut first).unwrap();
+    assert_eq!(first.trim(), "returned");
+    assert!(
+        start.elapsed() < Duration::from_millis(1500),
+        "foreground waited for background child"
+    );
+    let lines = reader
+        .lines()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join("\n");
+    assert!(lines.contains("Running sleep 2"));
+    assert!(lines.contains("status=1"));
+    assert!(child.wait().unwrap().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_background_builtins_and_conditional_jobs() {
+    let output = run("cd / &\necho BAD && sleep 0 &\necho recovered\nexit\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "recovered\n");
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(errors.contains("external commands only"));
+    assert!(errors.contains("cannot be conditional"));
+}

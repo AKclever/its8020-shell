@@ -44,6 +44,7 @@ pub struct Redirect {
 }
 #[derive(Debug, Clone, Default)]
 pub struct CommandSpec {
+    pub background: bool,
     pub words: Vec<Word>,
     pub stdout: Option<Redirect>,
     pub stderr: Option<Redirect>,
@@ -127,7 +128,7 @@ fn tokenize(line: &str) -> Result<Vec<Token>, String> {
                     chars.next();
                     op.push(c);
                 }
-                if op == "|" || op == "&" {
+                if op == "|" {
                     return Err(format!("unsupported operator: {op}"));
                 }
                 tokens.push(Token::Operator(op));
@@ -170,6 +171,12 @@ pub fn parse(line: &str) -> Result<Vec<Job>, String> {
                 if spec.words.is_empty() {
                     return Err("missing command before operator".into());
                 }
+                if op == "&" {
+                    if condition != Condition::Always {
+                        return Err("background commands cannot be conditional".into());
+                    }
+                    spec.background = true;
+                }
                 jobs.push(Job {
                     command: std::mem::take(&mut spec),
                     condition,
@@ -179,7 +186,7 @@ pub fn parse(line: &str) -> Result<Vec<Job>, String> {
                     "||" => Condition::Failure,
                     _ => Condition::Always,
                 };
-                if tokens.peek().is_none() && op != ";" {
+                if tokens.peek().is_none() && op != ";" && op != "&" {
                     return Err("missing command after operator".into());
                 }
             }

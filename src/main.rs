@@ -57,6 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
     }
+    if let Err(e) = shell.wait_all() {
+        eprintln!("shutdown: {e}");
+    }
     if let (Some(ed), Some(path)) = (&mut editor, history) {
         if let Err(e) = ed.save_history(&path) {
             eprintln!("history: {e}");

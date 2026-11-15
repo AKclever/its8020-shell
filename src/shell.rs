@@ -7,7 +7,7 @@ use std::{
     env,
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
 };
 #[derive(Default)]
 pub struct Shell {
@@ -15,9 +15,18 @@ pub struct Shell {
     pub status: i32,
     aliases: BTreeMap<String, Vec<String>>,
     variables: BTreeMap<String, String>,
+    jobs: Vec<BackgroundJob>,
+    next_job: u64,
+}
+struct BackgroundJob {
+    id: u64,
+    child: Child,
+    name: String,
+    finished: Option<ExitStatus>,
 }
 impl Shell {
     pub fn eval(&mut self, line: &str) {
+        self.poll_jobs();
         match parser::parse(line) {
             Ok(jobs) => {
                 for job in jobs {
@@ -59,6 +68,11 @@ impl Shell {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
+        let builtin = crate::editor::BUILTINS.contains(&words[0].as_str());
+        let assignment = words.len() == 1 && words[0].contains('=');
+        if spec.background && (builtin || assignment) {
+            return Err("background execution is supported for external commands only".into());
+        }
         let mut out_file = open_redirect(spec.stdout.as_ref(), &self.variables, self.status)?;
         let mut err_file = open_redirect(spec.stderr.as_ref(), &self.variables, self.status)?;
         let mut stdout = io::stdout();
@@ -81,13 +95,20 @@ impl Shell {
             }
         }
         match words[0].as_str() {
-            "cd" | "ls" | "exit" | "alias" | "set" | "unset" => match self.builtin(&words, out) {
-                Ok(()) => Ok(0),
-                Err(e) => {
-                    writeln!(err, "{}: {e}", words[0]).map_err(|e| e.to_string())?;
-                    Ok(1)
+            "wait" if words.len() == 1 => self.wait_all(),
+            "wait" => {
+                writeln!(err, "usage: wait").map_err(|e| e.to_string())?;
+                Ok(1)
+            }
+            "cd" | "ls" | "exit" | "alias" | "set" | "unset" | "jobs" => {
+                match self.builtin(&words, out) {
+                    Ok(()) => Ok(0),
+                    Err(e) => {
+                        writeln!(err, "{}: {e}", words[0]).map_err(|e| e.to_string())?;
+                        Ok(1)
+                    }
                 }
-            },
+            }
             program => {
                 let mut command = Command::new(program);
                 command.args(&words[1..]);
@@ -98,8 +119,25 @@ impl Shell {
                 if let Some(f) = &err_file {
                     command.stderr(Stdio::from(f.try_clone().map_err(|e| e.to_string())?));
                 }
-                match command.status() {
-                    Ok(status) => Ok(status.code().unwrap_or(1)),
+                if spec.background {
+                    command.stdin(Stdio::null());
+                }
+                match command.spawn() {
+                    Ok(child) if spec.background => {
+                        self.next_job += 1;
+                        eprintln!("[{}] pid {}", self.next_job, child.id());
+                        self.jobs.push(BackgroundJob {
+                            id: self.next_job,
+                            child,
+                            name: words.join(" "),
+                            finished: None,
+                        });
+                        Ok(0)
+                    }
+                    Ok(mut child) => child
+                        .wait()
+                        .map(|s| s.code().unwrap_or(1))
+                        .map_err(|e| e.to_string()),
                     Err(e) => {
                         let err: &mut dyn Write = match &mut err_file {
                             Some(f) => f,
@@ -114,6 +152,23 @@ impl Shell {
     }
     fn builtin(&mut self, words: &[String], out: &mut dyn Write) -> Result<(), String> {
         match words[0].as_str() {
+            "jobs" if words.len() == 1 => {
+                for job in &self.jobs {
+                    let state = job
+                        .finished
+                        .map(|s| format!("Done({})", s.code().unwrap_or(1)))
+                        .unwrap_or_else(|| "Running".into());
+                    writeln!(
+                        out,
+                        "[{}] pid {} {state} {}",
+                        job.id,
+                        job.child.id(),
+                        job.name
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            "jobs" => return Err("usage: jobs".into()),
             "set" if words.len() == 3 && expand::valid_name(&words[1]) => {
                 self.variables.insert(words[1].clone(), words[2].clone());
             }
@@ -134,9 +189,10 @@ impl Shell {
                         .map_err(|e| e.to_string())?;
                 }
                 _ => {
-                    if !words[1]
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    if words[1].is_empty()
+                        || !words[1]
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_')
                     {
                         return Err("alias name must contain letters, digits or underscore".into());
                     }
@@ -170,6 +226,35 @@ impl Shell {
             _ => unreachable!(),
         }
         Ok(())
+    }
+    fn poll_jobs(&mut self) {
+        for job in &mut self.jobs {
+            if job.finished.is_none() {
+                match job.child.try_wait() {
+                    Ok(Some(status)) => {
+                        job.finished = Some(status);
+                        eprintln!("[{}] done: {status}", job.id);
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("job {}: {e}", job.id),
+                }
+            }
+        }
+    }
+    pub fn wait_all(&mut self) -> Result<i32, String> {
+        let mut status = 0;
+        // Keep any unprocessed handles if a wait fails, so shutdown can retry them.
+        while !self.jobs.is_empty() {
+            let job = &mut self.jobs[0];
+            status = job
+                .child
+                .wait()
+                .map_err(|e| e.to_string())?
+                .code()
+                .unwrap_or(1);
+            self.jobs.remove(0);
+        }
+        Ok(status)
     }
 }
 fn open_redirect(

@@ -246,4 +246,27 @@ mod tests {
         assert_eq!(expand(&missing).unwrap(), vec![missing]);
         fs::remove_dir_all(base).unwrap();
     }
+    #[test]
+    fn quoted_stars_and_variables_do_not_become_globs() {
+        let vars = BTreeMap::from([("PATTERN".to_owned(), "src/*.rs".to_owned())]);
+        let jobs = crate::parser::parse("echo 'src/*.rs' $PATTERN \\* \"~\"").unwrap();
+        let words = &jobs[0].command.words;
+        for (word, expected) in words[1..].iter().zip(["src/*.rs", "src/*.rs", "*", "~"]) {
+            assert_eq!(expand_word(word, &vars, 0).unwrap(), vec![expected]);
+        }
+        assert!(valid_name("_a1"));
+        assert!(!valid_name("1a"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn mixed_literal_and_active_stars_match_correctly() {
+        let base = env::temp_dir().join(format!("its8020-mixed-{}", std::process::id()));
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("a*one"), "").unwrap();
+        fs::write(base.join("abone"), "").unwrap();
+        let jobs = crate::parser::parse(&format!("echo {}/a'*'*", base.display())).unwrap();
+        let result = expand_word(&jobs[0].command.words[1], &BTreeMap::new(), 0).unwrap();
+        assert_eq!(result, vec![base.join("a*one").display().to_string()]);
+        fs::remove_dir_all(base).unwrap();
+    }
 }
