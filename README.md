@@ -36,6 +36,23 @@ Hidden names need a pattern starting with a dot. An unmatched pattern stays lite
 No `?`, character classes, recursive `**`, or `~otheruser` expansion is supported.
 Try `pwd`, `echo hello Rust`, `ls ~`, `echo .`, `echo src/*.rs`, `false`, and an invalid command.
 
+## Milestone 3
+
+In a terminal, rustyline provides line editing, Up/Down history, and Tab completion.
+History is saved to `$HOME/.its8020_shell_history`; it may contain sensitive input,
+so avoid typing credentials. Built-in command names are highlighted green.
+Completion offers built-ins and executable PATH entries for the first word, and
+filenames for arguments. Completion is deliberately basic.
+Noninteractive input uses the same executor without prompts, history or colors.
+`>` and `>>` redirect/append stdout; `2>` and `2>>` redirect/append stderr.
+These work for built-ins and external programs. Redirection targets must expand to
+one path. Duplicate redirections for the same stream are rejected. Opening a file
+can create/truncate it even when starting the command subsequently fails.
+File redirection is implemented; process-to-process `|` pipelines are outside the
+published wording and are not supported. Quoting is deferred to milestone 5.
+Try `echo hello > greeting.txt`, `cat greeting.txt`, `cd /missing 2> errors.txt`,
+and `cat errors.txt`. These commands create files in the current directory.
+
 ## Submission questions
 
 The homework must be defended before the exam. A GitHub push does not establish

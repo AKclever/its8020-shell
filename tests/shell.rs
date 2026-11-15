@@ -55,3 +55,21 @@ fn external_arguments_expansion_and_failure_recovery() {
     assert!(out.contains(&std::env::current_dir().unwrap().display().to_string()));
     assert!(out.contains("recovered"));
 }
+
+#[cfg(unix)]
+#[test]
+fn redirects_both_streams_for_programs_and_builtins() {
+    let dir = std::env::temp_dir().join(format!("its8020-redir-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("out");
+    let err = dir.join("err");
+    let listing = dir.join("listing");
+    let output = run(&format!("echo first > {}\necho second >> {}\ncd /missing-its8020-directory 2> {}\nmissing_its8020_program 2>> {}\nls src > {}\nexit\n", out.display(), out.display(), err.display(), err.display(), listing.display()));
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(out).unwrap(), "first\nsecond\n");
+    let errors = fs::read_to_string(err).unwrap();
+    assert!(errors.contains("cd:"));
+    assert!(errors.contains("missing_its8020_program"));
+    assert!(fs::read_to_string(listing).unwrap().contains("main.rs"));
+    fs::remove_dir_all(dir).unwrap();
+}
