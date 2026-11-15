@@ -1,0 +1,6 @@
+[package]
+name = "its8020-shell"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

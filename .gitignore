@@ -1,0 +1,6 @@
+/target/
+/.shell_history
+/.env
+/.vscode/
+*.pem
+*.key
