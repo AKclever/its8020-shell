@@ -6,7 +6,7 @@ use rustyline::{
     Context, Helper,
 };
 use std::{borrow::Cow, collections::BTreeSet, env, fs};
-pub const BUILTINS: &[&str] = &["cd", "ls", "exit", "alias"];
+pub const BUILTINS: &[&str] = &["cd", "ls", "exit", "alias", "set", "unset"];
 pub struct ShellHelper {
     files: FilenameCompleter,
 }

@@ -85,3 +85,39 @@ fn chaining_short_circuits_and_aliases_are_bounded() {
     assert!(out.contains("after-cycle"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("alias cycle"));
 }
+
+#[cfg(unix)]
+#[test]
+fn quoting_variables_and_status_remain_data() {
+    let output = run("ITS8020_TEST_NAME='hello world'\nprintf '<%s>\\n' \"$ITS8020_TEST_NAME\" '$ITS8020_TEST_NAME' \"\" a\\ b\necho '*'\nfalse; echo status=$?\nset MESSAGE 'a; echo INJECTED'\nprintf '<%s>\\n' $MESSAGE\nprintenv ITS8020_TEST_NAME\nunset ITS8020_TEST_NAME\necho ${ITS8020_TEST_NAME}end\necho 'unterminated\necho after-error\nexit\n");
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        out.contains("<hello world>\n<$ITS8020_TEST_NAME>\n<>\n<a b>"),
+        "{out}"
+    );
+    assert!(out.contains("\n*\n"));
+    assert!(out.contains("status=1"));
+    assert!(out.contains("<a; echo INJECTED>"));
+    assert!(!out.lines().any(|l| l == "INJECTED"));
+    assert!(out.contains("\nhello world\n"));
+    assert!(out.contains("\nend\n"));
+    assert!(out.contains("after-error"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unclosed quote"));
+}
+
+#[cfg(unix)]
+#[test]
+fn quoted_paths_work_and_syntax_errors_have_no_side_effects() {
+    let dir = std::env::temp_dir().join(format!("its8020 quoted {}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("output file");
+    let output = run(&format!(
+        "echo BAD > '{}' &&\necho good > '{}'\ncat '{}'\nexit\n",
+        file.display(),
+        file.display(),
+        file.display()
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "good\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "good\n");
+    fs::remove_dir_all(dir).unwrap();
+}

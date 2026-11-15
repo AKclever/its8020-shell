@@ -67,6 +67,36 @@ are not saved between sessions and cannot contain operators. This explicit synta
 is a project choice; POSIX `alias name=value` is not supported.
 Try `false && echo skipped; false || echo recovered` and the alias example above.
 
+## Milestone 5
+
+The hand-written lexer preserves quote information in `Word`/`Part` values;
+the parser produces command and redirection structures before execution. `pest`
+is allowed but not required: this small grammar uses the standard library.
+Single quotes preserve literal text. Double quotes allow variables but suppress
+wildcards and tilde expansion. A backslash escapes the next character, including
+inside double quotes (a deliberate simplification). Adjacent quoted/unquoted
+parts form one argument; empty quotes produce an empty argument. A `#` at a word
+boundary starts a comment. Unclosed quotes and trailing escapes are errors.
+
+`NAME=value` as a standalone command or `set NAME VALUE` sets a session variable.
+Names follow `[A-Za-z_][A-Za-z0-9_]*`. `$NAME`, `${NAME}`, and `$?` expand; `$?`
+is the previous executed command's numeric status. Undefined variables become
+empty strings. `unset NAME` removes the session override (an inherited environment
+value becomes visible again). Session variables are passed to child environments;
+they do not change the parent terminal and are not saved. Command-prefix assignments
+such as `NAME=value program` are not supported. Alias values capture expanded
+arguments when defined; invocation appends new arguments.
+
+Variable values stay in one argument and do not introduce new wildcard or control
+operators. Only unquoted source `*` performs globbing; quoted or escaped `*` is
+literal, including mixed patterns. Bare source `~`, `~/`, `.`, and `./` perform path
+expansion; variable contents do not trigger another path expansion. Expansion is
+performed just before each executed command, so `NAME=Rust; echo $NAME` works.
+No command substitution, arithmetic, subshells, multiline syntax or full POSIX
+compatibility is claimed. Use WSL paths with `/`; quote paths containing spaces.
+Try `NAME='hello Rust'; echo "$NAME"`, `echo '$NAME'`, `echo "*"`, and
+`false; echo $?`.
+
 ## Submission questions
 
 The homework must be defended before the exam. A GitHub push does not establish

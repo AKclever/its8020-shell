@@ -1,6 +1,6 @@
 use crate::{
     expand,
-    parser::{self, CommandSpec, Condition, Redirect},
+    parser::{self, CommandSpec, Condition, Redirect, Word},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -14,6 +14,7 @@ pub struct Shell {
     pub exit: bool,
     pub status: i32,
     aliases: BTreeMap<String, Vec<String>>,
+    variables: BTreeMap<String, String>,
 }
 impl Shell {
     pub fn eval(&mut self, line: &str) {
@@ -43,22 +44,23 @@ impl Shell {
     fn execute(&mut self, mut spec: CommandSpec) -> Result<i32, String> {
         // Substitute command words only. Alias text cannot inject control operators.
         let mut seen = BTreeSet::new();
-        while let Some(replacement) = self.aliases.get(&spec.words[0]) {
-            if !seen.insert(spec.words[0].clone()) || seen.len() > 16 {
+        while let Some(replacement) = self.aliases.get(&spec.words[0].text()) {
+            if !seen.insert(spec.words[0].text()) || seen.len() > 16 {
                 return Err("alias cycle or expansion limit".into());
             }
-            spec.words.splice(0..1, replacement.clone());
+            spec.words
+                .splice(0..1, replacement.iter().cloned().map(Word::literal));
         }
         let words = spec
             .words
             .iter()
-            .map(|w| expand::expand(w))
+            .map(|w| expand::expand_word(w, &self.variables, self.status))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        let mut out_file = open_redirect(spec.stdout.as_ref())?;
-        let mut err_file = open_redirect(spec.stderr.as_ref())?;
+        let mut out_file = open_redirect(spec.stdout.as_ref(), &self.variables, self.status)?;
+        let mut err_file = open_redirect(spec.stderr.as_ref(), &self.variables, self.status)?;
         let mut stdout = io::stdout();
         let mut stderr = io::stderr();
         let out: &mut dyn Write = match &mut out_file {
@@ -69,8 +71,17 @@ impl Shell {
             Some(f) => f,
             None => &mut stderr,
         };
+        if words.len() == 1 {
+            if let Some((name, value)) = words[0].split_once('=') {
+                if !expand::valid_name(name) {
+                    return Err("invalid variable name".into());
+                }
+                self.variables.insert(name.to_owned(), value.to_owned());
+                return Ok(0);
+            }
+        }
         match words[0].as_str() {
-            "cd" | "ls" | "exit" | "alias" => match self.builtin(&words, out) {
+            "cd" | "ls" | "exit" | "alias" | "set" | "unset" => match self.builtin(&words, out) {
                 Ok(()) => Ok(0),
                 Err(e) => {
                     writeln!(err, "{}: {e}", words[0]).map_err(|e| e.to_string())?;
@@ -80,6 +91,7 @@ impl Shell {
             program => {
                 let mut command = Command::new(program);
                 command.args(&words[1..]);
+                command.envs(&self.variables);
                 if let Some(f) = out_file {
                     command.stdout(Stdio::from(f));
                 }
@@ -102,6 +114,14 @@ impl Shell {
     }
     fn builtin(&mut self, words: &[String], out: &mut dyn Write) -> Result<(), String> {
         match words[0].as_str() {
+            "set" if words.len() == 3 && expand::valid_name(&words[1]) => {
+                self.variables.insert(words[1].clone(), words[2].clone());
+            }
+            "set" => return Err("usage: set NAME VALUE".into()),
+            "unset" if words.len() == 2 && expand::valid_name(&words[1]) => {
+                self.variables.remove(&words[1]);
+            }
+            "unset" => return Err("usage: unset NAME".into()),
             "alias" => match words.len() {
                 1 => {
                     for (name, value) in &self.aliases {
@@ -126,7 +146,12 @@ impl Shell {
             "exit" if words.len() == 1 => self.exit = true,
             "exit" => return Err("usage: exit".into()),
             "cd" if words.len() <= 2 => {
-                let path = words.get(1).cloned().map(Ok).unwrap_or_else(expand::home)?;
+                let path = words
+                    .get(1)
+                    .cloned()
+                    .or_else(|| self.variables.get("HOME").cloned())
+                    .map(Ok)
+                    .unwrap_or_else(expand::home)?;
                 env::set_current_dir(path).map_err(|e| e.to_string())?;
             }
             "cd" => return Err("usage: cd [directory]".into()),
@@ -147,10 +172,14 @@ impl Shell {
         Ok(())
     }
 }
-fn open_redirect(redir: Option<&Redirect>) -> Result<Option<File>, String> {
+fn open_redirect(
+    redir: Option<&Redirect>,
+    vars: &BTreeMap<String, String>,
+    status: i32,
+) -> Result<Option<File>, String> {
     redir
         .map(|r| {
-            let paths = expand::expand(&r.path)?;
+            let paths = expand::expand_word(&r.path, vars, status)?;
             if paths.len() != 1 {
                 return Err("redirection needs exactly one filename".into());
             }
