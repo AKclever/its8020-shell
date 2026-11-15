@@ -73,3 +73,15 @@ fn redirects_both_streams_for_programs_and_builtins() {
     assert!(fs::read_to_string(listing).unwrap().contains("main.rs"));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn chaining_short_circuits_and_aliases_are_bounded() {
+    let output = run("false && echo BAD; true || echo BAD; false || echo recovered\nalias greet echo hello\ngreet Rust\nalias a b\nalias b a\na\necho after-cycle\nexit; echo BAD\n");
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(!out.contains("BAD"));
+    assert!(out.contains("recovered"));
+    assert!(out.contains("hello Rust"));
+    assert!(out.contains("after-cycle"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("alias cycle"));
+}

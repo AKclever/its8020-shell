@@ -1,8 +1,9 @@
 use crate::{
     expand,
-    parser::{self, CommandSpec, Redirect},
+    parser::{self, CommandSpec, Condition, Redirect},
 };
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     fs::{self, File, OpenOptions},
     io::{self, Write},
@@ -12,24 +13,42 @@ use std::{
 pub struct Shell {
     pub exit: bool,
     pub status: i32,
+    aliases: BTreeMap<String, Vec<String>>,
 }
 impl Shell {
     pub fn eval(&mut self, line: &str) {
         match parser::parse(line) {
-            Ok(Some(spec)) => {
-                self.status = self.execute(spec).unwrap_or_else(|e| {
-                    eprintln!("shell: {e}");
-                    1
-                });
+            Ok(jobs) => {
+                for job in jobs {
+                    if self.exit {
+                        break;
+                    }
+                    if (job.condition == Condition::Success && self.status != 0)
+                        || (job.condition == Condition::Failure && self.status == 0)
+                    {
+                        continue;
+                    }
+                    self.status = self.execute(job.command).unwrap_or_else(|e| {
+                        eprintln!("shell: {e}");
+                        1
+                    });
+                }
             }
-            Ok(None) => {}
             Err(e) => {
                 eprintln!("syntax: {e}");
                 self.status = 2;
             }
         }
     }
-    fn execute(&mut self, spec: CommandSpec) -> Result<i32, String> {
+    fn execute(&mut self, mut spec: CommandSpec) -> Result<i32, String> {
+        // Substitute command words only. Alias text cannot inject control operators.
+        let mut seen = BTreeSet::new();
+        while let Some(replacement) = self.aliases.get(&spec.words[0]) {
+            if !seen.insert(spec.words[0].clone()) || seen.len() > 16 {
+                return Err("alias cycle or expansion limit".into());
+            }
+            spec.words.splice(0..1, replacement.clone());
+        }
         let words = spec
             .words
             .iter()
@@ -51,7 +70,7 @@ impl Shell {
             None => &mut stderr,
         };
         match words[0].as_str() {
-            "cd" | "ls" | "exit" => match self.builtin(&words, out) {
+            "cd" | "ls" | "exit" | "alias" => match self.builtin(&words, out) {
                 Ok(()) => Ok(0),
                 Err(e) => {
                     writeln!(err, "{}: {e}", words[0]).map_err(|e| e.to_string())?;
@@ -83,6 +102,27 @@ impl Shell {
     }
     fn builtin(&mut self, words: &[String], out: &mut dyn Write) -> Result<(), String> {
         match words[0].as_str() {
+            "alias" => match words.len() {
+                1 => {
+                    for (name, value) in &self.aliases {
+                        writeln!(out, "{name}: {}", value.join(" ")).map_err(|e| e.to_string())?;
+                    }
+                }
+                2 => {
+                    let value = self.aliases.get(&words[1]).ok_or("alias not found")?;
+                    writeln!(out, "{}: {}", words[1], value.join(" "))
+                        .map_err(|e| e.to_string())?;
+                }
+                _ => {
+                    if !words[1]
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        return Err("alias name must contain letters, digits or underscore".into());
+                    }
+                    self.aliases.insert(words[1].clone(), words[2..].to_vec());
+                }
+            },
             "exit" if words.len() == 1 => self.exit = true,
             "exit" => return Err("usage: exit".into()),
             "cd" if words.len() <= 2 => {

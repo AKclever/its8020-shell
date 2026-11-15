@@ -53,6 +53,20 @@ published wording and are not supported. Quoting is deferred to milestone 5.
 Try `echo hello > greeting.txt`, `cat greeting.txt`, `cd /missing 2> errors.txt`,
 and `cat errors.txt`. These commands create files in the current directory.
 
+## Milestone 4
+
+`a ; b` always runs b, `a && b` runs b after success, and `a || b` runs b after
+failure. Conditions are evaluated left-to-right with equal precedence for `&&`
+and `||`; `;` starts an unconditional command. Nonzero means failure, including
+failed built-ins. A trailing `;` is accepted, a trailing `&&` or `||` is an error.
+The whole line is parsed before any commands execute.
+`alias greet echo hello` defines an in-memory command-word substitution;
+`greet Rust` runs `echo hello Rust`. `alias` lists aliases; `alias greet` shows one.
+Aliases may chain but cycles and expansion depth over 16 are errors. Definitions
+are not saved between sessions and cannot contain operators. This explicit syntax
+is a project choice; POSIX `alias name=value` is not supported.
+Try `false && echo skipped; false || echo recovered` and the alias example above.
+
 ## Submission questions
 
 The homework must be defended before the exam. A GitHub push does not establish
