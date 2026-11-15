@@ -1,5 +1,6 @@
 use std::env;
 use std::io::{self, Write};
+mod expand;
 
 fn main() {
     loop {
@@ -21,11 +22,21 @@ fn main() {
                 break;
             }
         }
-        let words: Vec<_> = line.split_whitespace().collect();
+        let words = match line
+            .split_whitespace()
+            .map(expand::expand)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(words) => words.into_iter().flatten().collect::<Vec<_>>(),
+            Err(e) => {
+                eprintln!("expansion: {e}");
+                continue;
+            }
+        };
         let Some(command) = words.first() else {
             continue;
         };
-        let result: Result<(), String> = match *command {
+        let result: Result<(), String> = match command.as_str() {
             "exit" if words.len() == 1 => break,
             "exit" => Err("usage: exit".into()),
             "cd" if words.len() <= 2 => {
@@ -37,8 +48,8 @@ fn main() {
             }
             "cd" => Err("usage: cd [directory]".into()),
             "ls" if words.len() <= 2 => (|| {
-                let entries =
-                    std::fs::read_dir(words.get(1).unwrap_or(&".")).map_err(|e| e.to_string())?;
+                let entries = std::fs::read_dir(words.get(1).map(String::as_str).unwrap_or("."))
+                    .map_err(|e| e.to_string())?;
                 let mut names = entries
                     .map(|e| e.map(|e| e.file_name()))
                     .collect::<Result<Vec<_>, _>>()
@@ -50,7 +61,15 @@ fn main() {
                 Ok(())
             })(),
             "ls" => Err("usage: ls [directory]".into()),
-            _ => Err(format!("unknown command: {command}")),
+            _ => std::process::Command::new(command)
+                .args(&words[1..])
+                .status()
+                .map(|status| {
+                    if !status.success() {
+                        eprintln!("{command}: {status}");
+                    }
+                })
+                .map_err(|e| e.to_string()),
         };
         if let Err(e) = result {
             eprintln!("{command}: {e}");

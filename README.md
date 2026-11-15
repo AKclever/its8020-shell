@@ -24,6 +24,18 @@ At this stage `cd` without an argument uses HOME (USERPROFILE fallback on Window
 `ls [directory]` includes hidden entries. Options such as `ls -l` are not implemented.
 `exit` takes no arguments. Words are separated by whitespace; quoting arrives later.
 
+## Milestone 2
+
+External commands use `Command::new(program).args(arguments).status()` directly.
+The child inherits input/output and the shell waits for it. PATH resolves executable
+names. No Bash, PowerShell or cmd interpreter is involved.
+Bare `~` and a leading `~/` expand to HOME; bare `.` and leading `./` expand to the
+current directory. `*` matches zero or more characters within a path component;
+multiple wildcard components work. Matches are sorted and case-sensitive.
+Hidden names need a pattern starting with a dot. An unmatched pattern stays literal.
+No `?`, character classes, recursive `**`, or `~otheruser` expansion is supported.
+Try `pwd`, `echo hello Rust`, `ls ~`, `echo .`, `echo src/*.rs`, `false`, and an invalid command.
+
 ## Submission questions
 
 The homework must be defended before the exam. A GitHub push does not establish

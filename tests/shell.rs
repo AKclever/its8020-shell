@@ -42,3 +42,16 @@ fn cd_persists_and_exit_stops_processing() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains("missing_after_exit"));
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn external_arguments_expansion_and_failure_recovery() {
+    let output = run("/usr/bin/printf %s:%s first second\necho src/*.rs\necho ~\necho .\nfalse\necho recovered\nexit\n");
+    assert!(output.status.success());
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("first:second"));
+    assert!(out.contains("src/main.rs"));
+    assert!(out.contains(&std::env::var("HOME").unwrap()));
+    assert!(out.contains(&std::env::current_dir().unwrap().display().to_string()));
+    assert!(out.contains("recovered"));
+}
